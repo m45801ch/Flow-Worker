@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+dist/
+*.tsbuildinfo
+.vite/
+work/
+.superpowers/brainstorm/
+.superpowers/sdd/reports/
