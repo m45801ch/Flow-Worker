@@ -25,7 +25,6 @@ describe("ProjectDocumentV2", () => {
     ];
 
     for (const schema of documents) {
-      expect(schema.safeParse({ source: "native", records: [] }).success).toBe(true);
       expect(schema.safeParse([]).success).toBe(false);
     }
   });

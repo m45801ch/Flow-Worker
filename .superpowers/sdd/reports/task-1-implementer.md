@@ -27,3 +27,9 @@
 
 - Existing V1 UI generation flows are not yet converted to produce V2 document histories; that integration is intentionally deferred to later tasks.
 - The full test command emits Node's pre-existing invalid `--localstorage-file` warning, but all 30 tests pass.
+## Review fixes
+
+- Replaced permissive placeholder schemas with native outline, cast, art, script, and storyboard contracts, each covered by positive and negative cases.
+- Added full V1/V2 parsing validation, cloned V1 migration payloads, and validated/migrated IndexedDB records on `get` and `list`.
+- Routed side-panel export, import, and save operations through V2 conversion/parsing; persistence failures are caught and recorded in the debug log.
+- Verification after review: focused Task 1 tests 23/23; full suite 47/47; typecheck and build passed; generated manifest remains `0.1.18`.
