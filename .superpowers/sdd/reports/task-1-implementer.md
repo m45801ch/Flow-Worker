@@ -33,3 +33,9 @@
 - Added full V1/V2 parsing validation, cloned V1 migration payloads, and validated/migrated IndexedDB records on `get` and `list`.
 - Routed side-panel export, import, and save operations through V2 conversion/parsing; persistence failures are caught and recorded in the debug log.
 - Verification after review: focused Task 1 tests 23/23; full suite 47/47; typecheck and build passed; generated manifest remains `0.1.18`.
+## Native V2 preservation fix
+
+- Retained a cloned imported native V2 document as canonical side-panel state whenever no V1 migration backup exists.
+- Export and IndexedDB persistence now clone that canonical document and apply only the editable V1 project metadata/settings, preserving `documents`, `assets`, `flow`, and `jobs`.
+- Added a regression covering native V2 import without a migration backup, non-empty outline history, immediate persistence, and export.
+- Verification: focused regression 3/3; full suite 48/48; `npm run typecheck` and `npm run build` passed; version remains `0.1.18`.

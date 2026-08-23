@@ -25,3 +25,4 @@
 - Every milestone increments all version files by `0.0.1`.
 
 - Task 1 review fixes: native contract validation, V1/V2 parser validation, cloned migration payloads, IndexedDB normalization, V2 side-panel I/O, and caught persistence failures verified (23 focused / 47 full tests).
+- Task 1 native V2 preservation fix: imported native V2 documents without a V1 migration backup are retained as canonical state across UI projection, immediate export, and IndexedDB persistence; outline and all canonical collections are preserved. Verification: focused 3/3, full 48/48, typecheck/build passed.
