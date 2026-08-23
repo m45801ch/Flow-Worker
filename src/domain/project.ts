@@ -1,4 +1,6 @@
 import { createAssetId } from "./asset-ids";
+import { parseProject } from "./migration";
+import type { ProjectDocumentV2 } from "./project-v2";
 import type { ProjectContext } from "./types";
 
 export type ProviderName = "gemini" | "openai" | "groq" | "openrouter";
@@ -23,11 +25,7 @@ export function createProject(title = "未命名影片", settings = defaultSetti
   return { schemaVersion: "1.0", project: { id: crypto.randomUUID(), title, settings, provider: "gemini", model: "gemini-2.0-flash", status: "draft", updatedAt: now }, outline: null, artCompleted: false, characters: [], locations: [], props: [], costumes: [], episodes: [], spatialMaps: [], shotStates: [], continuityReports: [], promptVersions: [] };
 }
 export function toProjectContext(project: ProjectDocument): ProjectContext { return { projectId: project.project.id, language: project.project.settings.language, outputFormat: "json" }; }
-export function exportProject(project: ProjectDocument): string { return JSON.stringify(project, null, 2); }
-export function exportProjectBundle(project: ProjectDocument) { return { project: JSON.parse(exportProject(project)) as ProjectDocument, exportedAt: new Date().toISOString(), format: "flow-companion" as const }; }
-export function importProject(raw: string): ProjectDocument {
-  const parsed = JSON.parse(raw) as ProjectDocument;
-  if (parsed.schemaVersion !== "1.0" || !parsed.project?.id || !parsed.project.settings) throw new Error("Invalid Flow Companion project JSON");
-  return parsed;
-}
+export function exportProject(project: ProjectDocument | ProjectDocumentV2): string { return JSON.stringify(project, null, 2); }
+export function exportProjectBundle(project: ProjectDocument | ProjectDocumentV2) { return { project: JSON.parse(exportProject(project)) as ProjectDocument | ProjectDocumentV2, exportedAt: new Date().toISOString(), format: "flow-companion" as const }; }
+export function importProject(raw: string): ProjectDocumentV2 { return parseProject(raw); }
 export { createAssetId };
