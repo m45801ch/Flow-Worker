@@ -49,6 +49,15 @@ describe("project migration", () => {
     expect(migrated.assets.entities.some((entity) => entity.id === "char-1")).toBe(true);
   });
 
+  it("marks legacy storyboard cuts for state review instead of treating them as continuity-safe", () => {
+    const legacy = { ...v1Fixture, shotStates: [{ shotId: "legacy-shot-1", sceneId: "scene-1", action: "Zhao Wang stands" }] };
+    const migrated = migrateProjectV1(legacy);
+    const cuts = migrated.documents.storyboard.entries[0]?.data.episodes[0]?.segments[0]?.cuts;
+    expect(cuts?.[0]).toMatchObject({ continuityStatus: "needs-state-review" });
+    expect(cuts?.[0]).not.toHaveProperty("previousState");
+    expect(cuts?.[0]).not.toHaveProperty("currentState");
+  });
+
   it("parses V2 projects and migrates validated V1 JSON without mutating the input", () => {
     const raw = JSON.stringify(v1Fixture);
     const migrated = parseProject(raw);

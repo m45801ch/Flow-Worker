@@ -8,5 +8,7 @@ describe("story generation request", () => {
     expect(request.userPrompt).toContain("失憶偵探");
     expect(request.schema).toContain("logline");
     expect(request.systemPrompt).not.toContain("趙王");
+    expect(request.userPrompt).toContain('"targetDurationSec":60');
+    expect(request.userPrompt).toContain("影片目標時長為 60 秒");
   });
 });

@@ -10,10 +10,17 @@ export default defineConfig({
       input: {
         sidepanel: "sidepanel.html",
         options: "options.html",
-        background: "src/background/service-worker.ts"
+        background: "src/background/service-worker.ts",
+        contentScript: "src/flow/content-script.ts",
+        autoFlowFree: "src/flow/auto-flow-free.js"
       },
       output: {
-        entryFileNames: (chunk) => chunk.name === "background" ? "background.js" : "assets/[name]-[hash].js"
+        entryFileNames: (chunk) => {
+          if (chunk.name === "background") return "background.js";
+          if (chunk.name === "contentScript") return "content-script.js";
+          if (chunk.name === "autoFlowFree") return "auto-flow-free.js";
+          return "assets/[name]-[hash].js";
+        }
       }
     }
   }

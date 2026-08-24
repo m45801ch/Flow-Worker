@@ -33,5 +33,5 @@ export const emptyVersionHistory = <T>(): VersionHistory<T> => ({ currentVersion
 
 export function createProjectV2(title = "未命名影片", settings = defaultSettings()): ProjectDocumentV2 {
   const now = new Date().toISOString();
-  return { schemaVersion: "2.0", project: { id: crypto.randomUUID(), title, settings, provider: "gemini", model: "gemini-2.0-flash", status: "draft", updatedAt: now }, documents: { outline: emptyVersionHistory(), cast: emptyVersionHistory(), art: emptyVersionHistory(), script: emptyVersionHistory(), storyboard: emptyVersionHistory() }, assets: { entities: [] }, flow: {}, jobs: [] };
+  return { schemaVersion: "2.0", project: { id: crypto.randomUUID(), title, settings, provider: "gemini", model: "gemini-3.7-flash", status: "draft", updatedAt: now }, documents: { outline: emptyVersionHistory(), cast: emptyVersionHistory(), art: emptyVersionHistory(), script: emptyVersionHistory(), storyboard: emptyVersionHistory() }, assets: { entities: [] }, flow: {}, jobs: [] };
 }

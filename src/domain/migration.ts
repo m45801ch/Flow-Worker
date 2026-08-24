@@ -23,7 +23,7 @@ const duration = (value: number) => Math.max(1, value || 1);
 export function migrateProjectV1(input: ProjectDocument): ProjectDocumentV2 {
   const source = structuredClone(projectDocumentV1Schema.parse(input)) as ProjectDocument;
   const createdAt = source.project.updatedAt;
-  const storyboardCuts = source.shotStates.map((shot, index) => ({ id: String(shot.shotId ?? `migration-cut-${index + 1}`), beats: [], durationSec: 4 as const, legacyShotState: structuredClone(shot) }));
+  const storyboardCuts = source.shotStates.map((shot, index) => ({ id: String(shot.shotId ?? `migration-cut-${index + 1}`), beats: [], durationSec: 4 as const, continuityStatus: "needs-state-review" as const, legacyShotState: structuredClone(shot) }));
   return {
     schemaVersion: "2.0",
     project: structuredClone(source.project),
