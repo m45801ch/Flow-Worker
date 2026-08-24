@@ -71,3 +71,9 @@ Provider 只生成文字與結構化 JSON。Flow 操作必須由使用者從擴�
 ## Cut-first 排錯
 
 若分鏡頁顯示「請先載入劇本」，請先完成劇本階段或匯入包含 script document 的 Project；Storyboard Director 不會自行補寫劇本。若顯示 native duration 錯誤，請把該 Cut 改為 4、6 或 8 秒。若出現 continuity blocker，先修正上一／目前 Shot State、空間 anchor、人物比例或 camera axis，再重新編譯；不要直接繞過 gate。若 Segment Manifest 一直是 `generating`，請確認每個 Cut 都收到 `ITEM_RESULT` 並具有 video asset 與 local filename；只有全部 Cut 完成才可交給外部 ffmpeg 組裝。
+
+## Flow 佇列單筆操作與錯誤排查
+
+Flow 佇列現在可對每個完整 manifest job 個別按 **單獨執行**，也可按 **移除** 從 IndexedDB 與目前佇列刪除；Auto-Flow 執行期間會停用這兩項操作，避免重入或刪除正在執行的 job。全域 **執行佇列** 仍會依原本的相容設定分組批次處理。
+
+trusted click 已被 service worker 接受後，Flow DOM 的生成狀態可能晚於短暫 acknowledgement window；這不再把已送入 Flow 的 Prompt 誤判為失敗。若真正失敗，content script 會將具體例外傳回 job status，並將 Flow content-script 的 DEBUG_LOG 轉送至 Side Panel 除錯紀錄。若圖片已在 Flow 產生但 UI 仍顯示失敗，請重新載入 extension 後重試單筆 Prompt，並匯出包含 `queue` 與 `flow-content-script` 訊息的 debug JSON。

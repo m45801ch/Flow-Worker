@@ -23,3 +23,9 @@ Flow DOM adapter 不使用座標點擊，不呼叫非公開 Flow API，也不接
 ## 已知限制
 
 實際 Google Flow DOM 會隨帳戶、語言與產品版本變更。正式操作前，請以目前頁面掃描到的明確 role、aria-label 或 data attribute 為準；找不到元素時應停下來調整 adapter fixture，而不是改用座標。Provider 生成與 Google 登入、配額、內容安全、人工確認仍由使用者和 Google Flow 控制。
+
+## 生成完成但佇列顯示失敗
+
+若 Flow 頁面實際已建立圖片，但第一個 job 顯示失敗並沒有繼續第二個 Prompt，常見原因是 trusted click 已被接受，而 Flow DOM acknowledgement 晚於短暫等待窗口。0.1.36 起，trusted click 成功後會讓該 Prompt 繼續進入結果等待，不會只因 acknowledgement 延遲而重試／失敗；真正的 executor exception 會以 `ITEM_STATUS.error` 傳回。
+
+重新載入 extension 後，可以先對該 job 按「單獨執行」驗證，不必重跑整個佇列。若仍失敗，查看 job 卡片的具體 error，並匯出新的除錯 JSON；content-script 訊息會經 background 轉送，標記 `source: flow-content-script`，其中包含 submit、Flow acknowledgement、結果等待與下載診斷。成功確認後，再按全域「執行佇列」繼續其他 Prompt。佇列中的 job 也可以在 Auto-Flow 停止後按「移除」刪除。

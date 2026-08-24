@@ -69,7 +69,7 @@ async function applyRunnerEvent(event: AutoFlowRunEvent) {
     return;
   }
   if (event.kind === "job-status") {
-    await setJobStatus(event.jobId, event.status, event.status === "failed" ? "Google Flow 生成失敗，請查看 Flow 頁面與除錯紀錄" : undefined);
+    await setJobStatus(event.jobId, event.status, event.status === "failed" ? (event.error || "Google Flow 生成失敗，請查看 Flow 頁面與除錯紀錄") : undefined);
     return;
   }
   if (event.kind === "dispatch") {
@@ -131,6 +131,10 @@ async function stopAutoFlow(sendResponse: (response: unknown) => void) {
 }
 
 async function handleAutoFlowEvent(message: any, sender: any) {
+  if (message.type === "DEBUG_LOG") {
+    try { chrome.runtime.sendMessage({ type: "AUTO_FLOW_DEBUG_LOG", level: message.level === "error" ? "error" : "info", message: String(message.text || ""), stage: "queue", details: { source: "flow-content-script", tabId: sender?.tab?.id } }); } catch { /* side panel may be closed */ }
+    return;
+  }
   if (!activeAutoFlowRun || activeAutoFlowRun.status !== "running") return;
   if (activeFlowTabId !== null && sender?.tab?.id !== activeFlowTabId) return;
   if (message.type === "ITEM_RETRY") {
@@ -144,7 +148,7 @@ async function handleAutoFlowEvent(message: any, sender: any) {
     return;
   }
   if (message.type !== "ITEM_STATUS") return;
-  const result = handleAutoFlowItemStatus(activeAutoFlowRun, Number(message.id), message.status === "done" ? "done" : message.status === "error" ? "error" : "running");
+  const result = handleAutoFlowItemStatus(activeAutoFlowRun, Number(message.id), message.status === "done" ? "done" : message.status === "error" ? "error" : "running", typeof message.error === "string" ? message.error : undefined);
   activeAutoFlowRun = result.run;
   for (const event of result.events) await applyRunnerEvent(event);
 }

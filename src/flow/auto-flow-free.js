@@ -217,8 +217,8 @@
   }
 
   // Status reporting
-  function reportItemStatus(id, status) {
-    try { chrome.runtime.sendMessage({ type: "ITEM_STATUS", id, status }); } catch (e) { /* ignore */ }
+  function reportItemStatus(id, status, error) {
+    try { chrome.runtime.sendMessage({ type: "ITEM_STATUS", id, status, ...(error ? { error: String(error) } : {}) }); } catch (e) { /* ignore */ }
   }
 
   // Element finders (Google Flow UI)
@@ -375,8 +375,9 @@
     for (let attempt = 1; attempt <= 2; attempt++) {
       if (!button) break;
       log("[Submit] activating primary button, attempt", attempt);
-      if (await activateSubmitButton(button) && await waitForSubmissionStart(button)) {
-        log("Submitted item", item.id, "(Flow acknowledged)");
+      if (await activateSubmitButton(button)) {
+        const acknowledged = await waitForSubmissionStart(button);
+        log("Submitted item", item.id, acknowledged ? "(Flow acknowledged)" : "(trusted click accepted; DOM acknowledgement pending)");
         return true;
       }
       if (attempt < 2) {
@@ -1648,7 +1649,7 @@
         if (!item) break;
         const res = await processOneWithRetry(item);
         if (res.ok) { reportItemStatus(item.id, "done"); }
-        else { logError("Error on item", item.id, res.err); reportItemStatus(item.id, "error"); }
+        else { const errorMessage = res.err instanceof Error ? res.err.message : String(res.err || "Auto-Flow item failed"); logError("Error on item", item.id, errorMessage); reportItemStatus(item.id, "error", errorMessage); }
         if (queue.length > 0) await sleep(randWait() * 1000);
       }
     };

@@ -14,7 +14,7 @@ export type AutoFlowRun = {
 };
 
 export type AutoFlowRunEvent =
-  | { kind: "job-status"; jobId: string; status: "preflight" | "configuring" | "completed" | "failed" | "retrying" }
+  | { kind: "job-status"; jobId: string; status: "preflight" | "configuring" | "completed" | "failed" | "retrying"; error?: string }
   | { kind: "item-result"; jobId: string; segmentId?: string; cutId?: string; videoAssetId?: string; localFileName?: string; videoUrl?: string; dataURL?: string; durationSec?: 4 | 6 | 8 }
   | { kind: "dispatch"; batch: AutoFlowBatch }
   | { kind: "completed" }
@@ -66,20 +66,21 @@ export function handleAutoFlowItemResult(run: AutoFlowRun, itemId: number, paylo
   return { run: nextRun, events: [event] };
 }
 
-export function handleAutoFlowItemStatus(run: AutoFlowRun, itemId: number, status: "running" | "done" | "error"): { run: AutoFlowRun; events: AutoFlowRunEvent[] } {
+export function handleAutoFlowItemStatus(run: AutoFlowRun, itemId: number, status: "running" | "done" | "error", error?: string): { run: AutoFlowRun; events: AutoFlowRunEvent[] } {
   if (run.status !== "running") return { run, events: [] };
   const current = run.batches[run.batchIndex];
   const item = current.queue.find((candidate) => candidate.id === itemId);
   if (!item) return { run, events: [] };
   const nextStatuses = { ...run.itemStatuses, [key(run.batchIndex, itemId)]: status };
   const jobStatus = status === "running" ? "configuring" : status === "done" ? "completed" : "failed";
-  const events: AutoFlowRunEvent[] = [{ kind: "job-status", jobId: item.jobId, status: jobStatus }];
+  const events: AutoFlowRunEvent[] = [{ kind: "job-status", jobId: item.jobId, status: jobStatus, ...(error && status === "error" ? { error } : {}) }];
   if (status === "running") return { run: { ...run, itemStatuses: nextStatuses }, events };
   const terminal = current.queue.every((candidate) => ["done", "error"].includes(nextStatuses[key(run.batchIndex, candidate.id)]));
   if (!terminal) return { run: { ...run, itemStatuses: nextStatuses }, events };
   if (current.queue.some((candidate) => nextStatuses[key(run.batchIndex, candidate.id)] === "error")) {
     const failedJob = current.queue.find((candidate) => nextStatuses[key(run.batchIndex, candidate.id)] === "error");
-    const failedRun = { ...run, itemStatuses: nextStatuses, status: "failed" as const, error: `Auto-Flow failed for job ${failedJob?.jobId || itemId}` };
+    const failureMessage = error || `Auto-Flow failed for job ${failedJob?.jobId || itemId}`;
+    const failedRun = { ...run, itemStatuses: nextStatuses, status: "failed" as const, error: failureMessage };
     events.push({ kind: "failed", error: failedRun.error });
     return { run: failedRun, events };
   }

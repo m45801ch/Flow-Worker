@@ -22,6 +22,11 @@ describe("JobStore", () => {
     expect(database.put).toHaveBeenCalledWith("jobs", expect.objectContaining({ status: "cancelled", outputAssetIds: ["A01", "A02"] }), "job-1");
   });
 
+  it("removes a single queued job by id", async () => {
+    await createJobStore().remove("job-1");
+    expect(database.delete).toHaveBeenCalledWith("jobs", "job-1");
+  });
+
   it("lists jobs in deterministic updated order", async () => {
     database.getAll.mockResolvedValue([{ ...record, id: "job-2", updatedAt: "2026-08-24T00:00:00.000Z" }, record]);
     const jobs = await createJobStore().list("project-1");

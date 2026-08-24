@@ -8,3 +8,5 @@
 .deliverables{margin-top:28px;display:grid;gap:12px}.deliverables details,.debug-panel{border:1px solid #3c463d;background:#171c18;padding:14px}.deliverables summary,.debug-panel summary{cursor:pointer;color:#d7f4a7;font:600 12px Manrope}.output-card{margin-top:12px;padding:14px;border:1px solid #303b31;background:#202620}.output-card h3{margin:0 0 8px;font-size:12px}.output-card p{color:#b8c2b4;font-size:11px;line-height:1.7}.output-card small{color:#7f8a7d}.output-card pre{white-space:pre-wrap;color:#d5dfd1;font:10px/1.65 'DM Mono';max-height:320px;overflow:auto}.prompt-output{border-color:#657f54}
 
 .asset-settings{margin-bottom:14px}.asset-prompt{max-height:220px!important}.prompt-label{margin-top:12px;color:#a2ad9c;font:500 10px 'DM Mono',monospace;letter-spacing:.08em}.job-prompt-details{margin-top:12px;border-top:1px solid #303830;padding-top:10px}.job-prompt-details summary{cursor:pointer;color:#c9ef84;font:10px 'DM Mono',monospace}.job-prompt-details pre{max-height:180px}.job-prompt-details p{margin:7px 0 0}
+
+.danger-button{color:#f0a070}.text-button:disabled{opacity:.45;cursor:not-allowed}

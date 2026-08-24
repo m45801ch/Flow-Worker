@@ -1,0 +1,22 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { FlowQueueView } from "./views/FlowQueueView";
+import type { StoredJobRecord } from "../storage/job-store";
+
+const job: StoredJobRecord = {
+  id: "job-1", projectId: "project-1", kind: "character-sheet", sourceEntityId: "char-1", status: "pending",
+  modelName: "Nano Banana 2", aspectRatio: "16:9", outputCount: 1, prompt: "character prompt", assetBindings: [], inputAssetIds: [],
+  manifest: { id: "job-1" } as any, attempts: 0, outputAssetIds: [], checkpoint: "pending", updatedAt: "2026-08-24T00:00:00.000Z",
+};
+
+describe("Flow Queue controls", () => {
+  it("offers single Prompt execution and removal for each job", () => {
+    const onExecuteJob = vi.fn();
+    const onRemove = vi.fn();
+    render(<FlowQueueView jobs={[job]} running={false} onExecute={vi.fn()} onStop={vi.fn()} onPause={vi.fn()} onResume={vi.fn()} onRetry={vi.fn()} onCancel={vi.fn()} onExecuteJob={onExecuteJob} onRemove={onRemove} />);
+    fireEvent.click(screen.getByRole("button", { name: /單獨執行/ }));
+    fireEvent.click(screen.getByRole("button", { name: /移除/ }));
+    expect(onExecuteJob).toHaveBeenCalledWith("job-1");
+    expect(onRemove).toHaveBeenCalledWith("job-1");
+  });
+});

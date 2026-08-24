@@ -21,10 +21,10 @@ describe("Auto-Flow run state", () => {
 
   it("stops a run when a batch item reports an error", () => {
     const run = createAutoFlowRun("run-1", [batch("job-1", 1)]);
-    const result = handleAutoFlowItemStatus(run, 0, "error");
+    const result = handleAutoFlowItemStatus(run, 0, "error", "Flow did not acknowledge the create button");
     expect(result.run.status).toBe("failed");
     expect(result.events).toContainEqual(expect.objectContaining({ kind: "failed" }));
-    expect(result.events).toContainEqual({ kind: "job-status", jobId: "job-1", status: "failed" });
+    expect(result.events).toContainEqual({ kind: "job-status", jobId: "job-1", status: "failed", error: "Flow did not acknowledge the create button" });
   });
 
   it("pauses later Segment Cuts when an earlier Cut fails", () => {
