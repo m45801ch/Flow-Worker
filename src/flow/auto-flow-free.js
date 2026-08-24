@@ -921,8 +921,8 @@
     const norm = s => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
     const btns = queryAllVisible(document);
     // 實測 Google Flow 使用 button[role=tab]，Radix ID 尾碼穩定為 trigger-IMAGE／trigger-VIDEO。
-    const modeSuffix = kind === "image" ? "-trigger-IMAGE" : "-trigger-VIDEO";
-    const modeTab = Array.from(document.querySelectorAll("button[role='tab']")).find(el => isVisible(el) && String(el.id || "").toUpperCase().endsWith(modeSuffix));
+    const modeSuffix = kind === "image" ? "-trigger-image" : "-trigger-video";
+    const modeTab = Array.from(document.querySelectorAll("button[role='tab']")).find(el => isVisible(el) && String(el.id || "").toLowerCase().endsWith(modeSuffix));
     if (modeTab) {
       const selected = modeTab.getAttribute("aria-selected") === "true" || modeTab.getAttribute("aria-checked") === "true" || modeTab.getAttribute("data-state") === "active" || modeTab.getAttribute("data-state") === "on";
       if (!selected) {
@@ -991,7 +991,7 @@
     if (suffix) {
       const direct = Array.from(document.querySelectorAll("button[role='tab']")).find(el => {
         const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0 && String(el.id || "").toUpperCase().endsWith(suffix);
+        return r.width > 0 && r.height > 0 && String(el.id || "").toUpperCase().endsWith(suffix.toUpperCase());
       });
       if (direct) { click(direct); log("Aspect set to", config.aspect, "via", direct.id); return true; }
     }
@@ -1155,7 +1155,7 @@
     // 實測 Google Flow 的數量控件是 button[role=tab]，Radix ID 尾碼為 trigger-1～trigger-4。
     const direct = Array.from(document.querySelectorAll("button[role='tab']")).find(el => {
       const r = el.getBoundingClientRect();
-      return r.width > 0 && r.height > 0 && String(el.id || "").endsWith("-trigger-" + n);
+      return r.width > 0 && r.height > 0 && String(el.id || "").toLowerCase().endsWith("-trigger-" + n);
     });
     if (direct) { click(direct); log("Outputs set to", n, "via", direct.id); return true; }
     // Flow 面板內的數量按鈕格式為 "x1", "x2", "x3", "x4"；先找 xN，避免誤點其他含數字的文字。
@@ -1925,25 +1925,30 @@
 
     // 圖片模式：擷取本段生成的圖片，存為 prevImage 供下一段「延用」使用，並回報對應名稱。
     if (isImageMode) {
+      let media;
       try {
-        const media = await waitForResult(20000);
-        if (media && media.tagName === "IMG") {
-          const url = media.src || media.currentSrc;
-          if (url) {
-            const resp = await fetch(url);
-            const blob = await resp.blob();
-            prevImage = new File([blob], "prev-image.png", { type: "image/png" });
-            const ext = (url.split("?")[0].match(/\.(png|jpe?g|webp)$/i) || ["", "png"])[1];
-            const resultName = outputFileName(item, 0, ext);
-            reportItemResult(item.id, url, undefined, { localFileName: resultName });
-            log("Reuse: captured previous image", blob.size, "bytes", "name:", resultName);
-
-          }
-        } else {
-          log("Reuse: no image result captured for item", item.id);
-        }
+        media = await waitForResult(20000);
       } catch (e) {
-        log("Reuse: capture failed:", e.message);
+        logError("圖片結果等待失敗:", e.message);
+        throw new Error(`Google Flow 圖片結果等待失敗：${e.message}`);
+      }
+      if (!media || media.tagName !== "IMG") {
+        logError("Google Flow 未找到本任務的新圖片結果", item.id);
+        throw new Error("Google Flow 未找到圖片結果，請查看 Flow 頁面與除錯紀錄");
+      }
+      const url = media.src || media.currentSrc;
+      if (!url) throw new Error("Google Flow 圖片結果沒有可下載的 URL");
+      try {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        prevImage = new File([blob], "prev-image.png", { type: "image/png" });
+        const ext = (url.split("?")[0].match(/\.(png|jpe?g|webp)$/i) || ["", "png"])[1];
+        const resultName = outputFileName(item, 0, ext);
+        reportItemResult(item.id, url, undefined, { localFileName: resultName });
+        log("Reuse: captured previous image", blob.size, "bytes", "name:", resultName);
+      } catch (e) {
+        logError("圖片結果下載失敗:", e.message);
+        throw new Error(`Google Flow 圖片結果下載失敗：${e.message}`);
       }
     }
 
