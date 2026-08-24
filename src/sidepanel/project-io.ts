@@ -1,6 +1,7 @@
 import { migrateProjectV1, projectDocumentV1Schema } from "../domain/migration";
 import { createProject, exportProject, importProject, type ProjectDocument } from "../domain/project";
 import type { ProjectDocumentV2 } from "../domain/project-v2";
+import { safeJson } from "../security/redaction";
 
 export function toProjectV2ForStorage(project: ProjectDocument, canonicalProject?: ProjectDocumentV2): ProjectDocumentV2 {
   if (!canonicalProject) return migrateProjectV1(project);
@@ -10,7 +11,7 @@ export function toProjectV2ForStorage(project: ProjectDocument, canonicalProject
 }
 
 export function exportSidePanelProject(project: ProjectDocument, canonicalProject?: ProjectDocumentV2): string {
-  return exportProject(toProjectV2ForStorage(project, canonicalProject));
+  return exportProject(safeJson(toProjectV2ForStorage(project, canonicalProject)));
 }
 
 export function importSidePanelProject(raw: string): ProjectDocumentV2 {

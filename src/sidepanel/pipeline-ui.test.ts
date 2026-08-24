@@ -14,18 +14,23 @@ describe("side panel pipeline mapping", () => {
     const input = stageInput("characters", project);
     expect(input.userPrompt).toContain("A lighthouse mystery");
     expect(input.userPrompt).not.toContain("趙王");
+    const artInput = stageInput("art", project);
+    expect(artInput.systemPrompt).toContain("complete English cinematic visual prompt");
+    expect(artInput.schema).toContain("sheetPrompt");
   });
 
   it("maps all five pipeline outputs into project state", () => {
     let project = createProject();
     project = applyStage(project, "outline", { title: "Lighthouse", logline: "A mystery" });
     project = applyStage(project, "characters", { characters: [{ name: "Mara" }], locations: [{ name: "Lighthouse" }], props: [{ name: "Key" }], costumes: [{ name: "Coat" }] });
-    project = applyStage(project, "art", { assetPrompts: [{ assetId: "char-1", prompt: "cinematic portrait" }], spatialMaps: [{ sceneId: "scene-1", entities: [], relations: [] }] });
+    project = applyStage(project, "art", { assetPrompts: [{ assetId: "char-1", prompt: "Cinematic close-up of Mara, a disciplined detective with sharp observant eyes, short black hair, calm focused expression, wearing a tailored charcoal detective coat over a dark shirt, cinematic noir lighting, 8k resolution, highly detailed facial features.", sheetPrompt: "16:9 HORIZONTAL CHARACTER SHEET. LEFT 34% FRONT HALF-BODY PORTRAIT. RIGHT-TOP FRONT, SIDE, BACK VIEWS. RIGHT-BOTTOM 4 DETAILS. SAME FACE, SAME HAIR, SAME PROPORTIONS.", negativePrompt: "text, watermark, extra people" }], spatialMaps: [{ sceneId: "scene-1", entities: [], relations: [] }] });
     project = applyStage(project, "script", { episodes: [{ title: "Opening", scenes: [{ beats: [{ action: "arrives", dialogue: "", durationSec: 4 }] }] }] });
     project = applyStage(project, "storyboard", { shotStates: [{ shotId: "shot-1", sceneId: "scene-1", characters: [], props: [], environment: { lighting: "night", weather: "clear", anchors: [] }, camera: { shotSize: "wide", lensMm: 35, distanceM: 4, angle: "eye", movement: "static" }, lighting: { source: "moon", intensity: "low", color: "blue" }, continuity: { locks: [], allowedChanges: [] } }] });
     expect(project.outline?.data.title).toBe("Lighthouse");
     expect(project.characters[0].name).toBe("Mara");
-    expect(project.characters[0].prompts.visual).toBe("cinematic portrait");
+    expect(project.characters[0].prompts.visual).toContain("Cinematic close-up of Mara");
+    expect(project.characters[0].prompts.sheet).toContain("CHARACTER SHEET");
+    expect(project.characters[0].prompts.negative).toContain("extra people");
     expect(project.episodes[0].scenes[0].beats[0].action).toBe("arrives");
     expect(project.shotStates[0].shotId).toBe("shot-1");
   });

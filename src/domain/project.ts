@@ -22,7 +22,7 @@ export type ProjectDocument = {
 export const defaultSettings = (): StorySettings => ({ theme: "", genre: "", era: "", location: "", visualStyle: "", language: "繁體中文", aspectRatio: "16:9", episodeDurationSec: 60, totalEpisodes: 1, shotsPerEpisode: 8, audience: "", pace: "", forbiddenElements: "", referenceStyle: "" });
 export function createProject(title = "未命名影片", settings = defaultSettings()): ProjectDocument {
   const now = new Date().toISOString();
-  return { schemaVersion: "1.0", project: { id: crypto.randomUUID(), title, settings, provider: "gemini", model: "gemini-2.0-flash", status: "draft", updatedAt: now }, outline: null, artCompleted: false, characters: [], locations: [], props: [], costumes: [], episodes: [], spatialMaps: [], shotStates: [], continuityReports: [], promptVersions: [] };
+  return { schemaVersion: "1.0", project: { id: crypto.randomUUID(), title, settings, provider: "gemini", model: "gemini-3.7-flash", status: "draft", updatedAt: now }, outline: null, artCompleted: false, characters: [], locations: [], props: [], costumes: [], episodes: [], spatialMaps: [], shotStates: [], continuityReports: [], promptVersions: [] };
 }
 export function toProjectContext(project: ProjectDocument): ProjectContext { return { projectId: project.project.id, language: project.project.settings.language, outputFormat: "json" }; }
 export function exportProject(project: ProjectDocument | ProjectDocumentV2): string { return JSON.stringify(project, null, 2); }

@@ -13,7 +13,9 @@ describe("provider model catalog", () => {
   it("uses the provider API key when fetching a model list", async () => {
     const calls: { url: string; headers?: HeadersInit }[] = [];
     await listModels("openrouter", "secret-key", async (url, init) => { calls.push({ url: String(url), headers: init?.headers }); return new Response(JSON.stringify({ data: [{ id: "openrouter/model" }] }), { status: 200 }); });
-    expect(calls[0].url).toBe("https://openrouter.ai/api/v1/models");
+    const url = new URL(calls[0].url);
+    expect(`${url.origin}${url.pathname}`).toBe("https://openrouter.ai/api/v1/models");
+    expect(url.searchParams.get("limit")).toBe("1000");
     expect(calls[0].headers).toMatchObject({ Authorization: "Bearer secret-key" });
   });
 });

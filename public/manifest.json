@@ -1,12 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Flow Companion — AI Movie Director",
-  "version": "0.1.18",
+  "version": "0.1.35",
   "description": "Plan structured AI films and carry continuity-safe prompts into Google Flow.",
   "action": { "default_title": "Open Flow Companion" },
   "side_panel": { "default_path": "sidepanel.html" },
   "options_page": "options.html",
-  "permissions": ["sidePanel", "storage"],
+  "permissions": ["sidePanel", "storage", "activeTab", "tabs", "scripting", "downloads", "alarms", "debugger"],
+  "host_permissions": ["https://labs.google/*", "https://labs.google.com/*", "https://generativelanguage.googleapis.com/*", "https://api.openai.com/*", "https://api.groq.com/*", "https://openrouter.ai/*"],
   "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [{ "matches": ["https://labs.google/*", "https://labs.google.com/*"], "js": ["content-script.js", "auto-flow-free.js"], "run_at": "document_idle" }],
   "icons": { "128": "icons/flow-companion-camera.png" }
 }
