@@ -53,7 +53,7 @@ export function createJobStore() {
     async updateStatus(id: string, status: FlowJobStatus, patch: Partial<StoredJobRecord> = {}) {
       const existing = await (await database()).get("jobs", id);
       if (!existing) throw new Error(`Flow job not found: ${id}`);
-      const updated: StoredJobRecord = { ...existing, ...patch, status, updatedAt: new Date().toISOString(), outputAssetIds: existing.outputAssetIds };
+      const updated: StoredJobRecord = { ...existing, ...patch, status, updatedAt: new Date().toISOString() };
       await (await database()).put("jobs", updated, id);
       return updated;
     }
