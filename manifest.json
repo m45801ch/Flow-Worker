@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Flow Companion — AI Movie Director",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "description": "Plan structured AI films and carry continuity-safe prompts into Google Flow.",
   "action": { "default_title": "Open Flow Companion" },
   "side_panel": { "default_path": "sidepanel.html" },
