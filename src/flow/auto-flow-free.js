@@ -5,6 +5,8 @@
 // ============================================================
 
 (() => {
+  // Flow 編輯器位於主文件；iframe 不應各自接收同一批次，否則會回報假錯誤並競爭操作。
+  if (window.top !== window) return;
   if (window.__flowCompanionAutoFlowInjected) return;
   window.__flowCompanionAutoFlowInjected = true;
 
@@ -12,6 +14,10 @@
   let config = null;
   let queue = [];
   let stopped = false;
+  let activeBatchPromise = null;
+  let pendingBatch = null;
+  const submittedJobIds = new Set();
+  const mediaBeforeByJob = new Map();
   let chainLastFrame = null;
   let resumeFrameFile = null;
   let prevSegmentFrame = null;
@@ -22,25 +28,44 @@
   // Chrome message listener
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "START_BATCH") {
-      config = msg.config;
-      queue = msg.queue;
-      stopped = false;
-      if (!findPromptTextarea()) {
-        logError("START_BATCH ignored: no prompt textarea in this frame");
-        queue.forEach(item => reportItemStatus(item.id, "error"));
+      const nextBatch = { config: msg.config, queue: Array.isArray(msg.queue) ? msg.queue : [] };
+      // 背景 runner 可能在前一批最後一個 ITEM_STATUS 尚未完全返回時就派送下一批。
+      // 不能在這裡覆寫正在執行的 queue/config，否則前批 worker 會誤吃到下一批任務。
+      if (activeBatchPromise) {
+        pendingBatch = nextBatch;
+        log("START_BATCH queued until current batch finishes:", nextBatch.queue.length, "items");
         return;
       }
-      if (config.resumeIndex > 0 && config.frames && config.frames.length) {
-        const fr = config.frames[0];
-        dataURLToFile(fr.dataUrl, fr.name || "chain-last-frame.png")
-          .then(f => { resumeFrameFile = f; log("Resumed chain frame restored:", fr.name); })
-          .catch(e => log("Resume frame restore failed:", e.message));
-      }
-      runBatch();
+      startBatch(nextBatch.config, nextBatch.queue);
     } else if (msg.type === "STOP_BATCH") {
       stopped = true;
+      pendingBatch = null;
     }
   });
+
+  function startBatch(nextConfig, nextQueue) {
+    config = nextConfig;
+    queue = nextQueue;
+    stopped = false;
+    if (!findPromptTextarea()) {
+      // 非主 frame 已在入口處安靜忽略；主 frame 找不到輸入框才回報批次錯誤。
+      logError("START_BATCH ignored: no prompt textarea in the top Flow document");
+      queue.forEach(item => reportItemStatus(item.id, "error", "Google Flow 主頁面找不到提示詞輸入框"));
+      return;
+    }
+    if (config.resumeIndex > 0 && config.frames && config.frames.length) {
+      const fr = config.frames[0];
+      dataURLToFile(fr.dataUrl, fr.name || "chain-last-frame.png")
+        .then(f => { resumeFrameFile = f; log("Resumed chain frame restored:", fr.name); })
+        .catch(e => log("Resume frame restore failed:", e.message));
+    }
+    activeBatchPromise = runBatch().finally(() => {
+      activeBatchPromise = null;
+      const next = pendingBatch;
+      pendingBatch = null;
+      if (next && !stopped) startBatch(next.config, next.queue);
+    });
+  }
 
   function log(...args) {
     console.log(LOG_PREFIX, ...args);
@@ -98,6 +123,41 @@
     return null;
   }
 
+  // 清空富文字編輯器（避免重試時舊文字殘留導致 923→1846 的重複累積）
+  function clearPromptEditor(el, slateEditor) {
+    try {
+      el.focus();
+      // 優先透過 Slate API 清空（若可用）
+      if (slateEditor && Array.isArray(slateEditor.children)) {
+        try {
+          // 將 Slate 內部狀態重設為空段落
+          slateEditor.children = [{ type: "paragraph", children: [{ text: "" }] }];
+          slateEditor.selection = { anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 0 } };
+          // 同步清空 DOM，避免 1846 殘留
+          const slateRoot = el.querySelector('[data-slate-node="element"]');
+          if (slateRoot) slateRoot.textContent = "";
+        } catch (e) { /* ignore slate reset error */ }
+      }
+      // DOM 層面全選刪除（Slate/ProseMirror/Lexical 皆會攔截並同步內部狀態）
+      try {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand("selectAll", false, null);
+        document.execCommand("delete", false, null);
+      } catch (e) { /* ignore */ }
+      // 最後防線：若仍有文字殘留，直接重設 innerHTML
+      const cur = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (cur.length > 0) {
+        el.innerHTML = '<p><span data-slate-node="text"><span data-slate-leaf="true"><span data-slate-string="true"></span></span></span></p>';
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward", data: null }));
+      }
+      log("[Prompt] cleared editor, before len:", cur.length);
+    } catch (e) { log("[Prompt] clear failed:", e.message); }
+  }
+
   // Utility: set native input value
   function setNativeValue(el, value) {
     if (el && el.isContentEditable) {
@@ -111,17 +171,21 @@
         log("[Prompt] editor type:", isSlate ? "Slate" : isPM ? "ProseMirror" : isLex ? "Lexical" : "unknown", "| class:", cls.slice(0, 80));
       } catch (e) { /* ignore */ }
 
-      // 方法 A（Slate 專用）：透過 React fiber 找到 Slate editor，設定 selection 後用 editor.insertText
       const slateEditor = findSlateEditor(el);
-      if (slateEditor) {
+      // 重試或連續任務前先清空，避免舊提示詞殘留導致重複送入（觀測到 923→1846）
+      clearPromptEditor(el, slateEditor);
+      // 方法 A（Slate 專用）：透過 React fiber 找到 Slate editor，設定 selection 後用 editor.insertText
+      // 重新取得 slateEditor 引用（clear 後可能已重設）
+      const slateEditor2 = slateEditor || findSlateEditor(el);
+      if (slateEditor2) {
         try {
           // 空編輯器通常是 [{children:[{text:""}]}]，path [0,0] 是第一個文字節點
-          slateEditor.selection = { anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 0 } };
-          slateEditor.insertText(value);
+          slateEditor2.selection = { anchor: { path: [0, 0], offset: 0 }, focus: { path: [0, 0], offset: 0 } };
+          slateEditor2.insertText(value);
           // 驗證 Slate 內部值是否真的寫入
           let inner = "";
           try {
-            const first = slateEditor.children && slateEditor.children[0] && slateEditor.children[0].children;
+            const first = slateEditor2.children && slateEditor2.children[0] && slateEditor2.children[0].children;
             inner = first ? (first[0] && first[0].text ? String(first[0].text).slice(0, 50) : "") : "";
           } catch (e) {}
           log("[Prompt] filled via Slate editor.insertText, length:", value.length, "| inner:", JSON.stringify(inner));
@@ -350,43 +414,116 @@
     return false;
   }
 
-  function submissionStateChanged(button) {
+  function visibleFlowMessages() {
+    const selectors = [
+      "[role='alert']", "[role='status']", "[aria-live='assertive']", "[aria-live='polite']",
+      "[data-sonner-toast]", "[class*='toast']", "[class*='snackbar']", "[class*='notification']",
+      "[class*='error']", "[class*='alert']"
+    ];
+    const seen = new Set();
+    const messages = [];
+    try {
+      document.querySelectorAll(selectors.join(",")).forEach(el => {
+        const r = el.getBoundingClientRect();
+        if (!(r.width > 0 && r.height > 0)) return;
+        const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!text || text.length > 300 || seen.has(text)) return;
+        seen.add(text);
+        messages.push(text);
+      });
+    } catch (e) { /* ignore diagnostic-only DOM failures */ }
+    return messages;
+  }
+
+  function findFlowErrorNotice() {
+    const errorRe = /點數不足|点数不足|沒有可用(?:的)?點數|没有可用(?:的)?点数|insufficient credits?|no credits?|quota exceeded|餘額不足|余额不足|rate limit|請稍後|请稍后|生成失敗|生成失败|建立失敗|创建失败|創建失敗|failed|error|unable to/i;
+    return visibleFlowMessages().find(text => errorRe.test(text)) || null;
+  }
+
+  function submitButtonDiagnostic(button) {
+    if (!button) return { found: false };
+    let rect = null;
+    try {
+      const r = button.getBoundingClientRect();
+      rect = { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
+    } catch (e) { /* ignore */ }
+    return {
+      found: true,
+      connected: document.contains(button),
+      text: (button.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80),
+      disabled: !!button.disabled,
+      ariaDisabled: button.getAttribute("aria-disabled"),
+      ariaBusy: button.getAttribute("aria-busy"),
+      rect,
+      outerHTML: (button.outerHTML || "").replace(/\s+/g, " ").slice(0, 500)
+    };
+  }
+
+  function promptLooksSubmitted(promptText, promptElement) {
+    if (!promptText) return false;
+    const el = promptElement && document.contains(promptElement) ? promptElement : findPromptTextarea();
+    if (!el) return true;
+    const current = (el.textContent || el.value || "").replace(/\s+/g, " ").trim();
+    if (!current) return true;
+    const marker = promptText.replace(/\s+/g, " ").trim().slice(0, 30);
+    return marker.length > 0 && !current.includes(marker) && current.length < promptText.length * 0.35;
+  }
+
+  function submissionStateChanged(button, promptText, promptElement) {
     if (!button || !document.contains(button)) return true;
     if (button.disabled || button.getAttribute("aria-disabled") === "true" ||
       button.getAttribute("aria-busy") === "true") return true;
     const busy = button.querySelector("[aria-busy='true'], [data-loading='true'], [role='progressbar']");
     if (busy) return true;
     try {
+      const pageBusy = Array.from(document.querySelectorAll("[aria-busy='true'], [data-loading='true'], [role='progressbar']"))
+        .some(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+      if (pageBusy || promptLooksSubmitted(promptText, promptElement)) return true;
       return snapshotMedia().some(src => src && !mediaBefore.has(src));
     } catch (e) { return false; }
   }
 
-  async function waitForSubmissionStart(button, maxMs = 12000) {
+  async function waitForSubmissionStart(button, promptText, promptElement, maxMs = 12000) {
     const deadline = performance.now() + maxMs;
     while (performance.now() < deadline) {
-      if (submissionStateChanged(button)) return true;
+      if (findFlowErrorNotice()) return false;
+      if (submissionStateChanged(button, promptText, promptElement)) return true;
       await sleep(100);
     }
-    return submissionStateChanged(button);
+    return submissionStateChanged(button, promptText, promptElement);
   }
 
   async function submitPrompt(item) {
+    const promptText = cleanPromptText(item.text);
+    const promptElement = findPromptTextarea();
     let button = findSubmitButton();
     for (let attempt = 1; attempt <= 2; attempt++) {
       if (!button) break;
+      log("[Submit] before trusted click:", JSON.stringify(submitButtonDiagnostic(button)));
+      const existingError = findFlowErrorNotice();
+      if (existingError) throw new Error(`Google Flow 建立前顯示錯誤：${existingError}`);
       log("[Submit] activating primary button, attempt", attempt);
       if (await activateSubmitButton(button)) {
-        const acknowledged = await waitForSubmissionStart(button);
-        log("Submitted item", item.id, acknowledged ? "(Flow acknowledged)" : "(trusted click accepted; DOM acknowledgement pending)");
-        return true;
+        const acknowledged = await waitForSubmissionStart(button, promptText, promptElement);
+        const errorNotice = findFlowErrorNotice();
+        log("[Submit] acknowledgement:", JSON.stringify({ acknowledged, attempt, frame: window.top === window, errorNotice, button: submitButtonDiagnostic(button) }));
+        if (errorNotice) throw new Error(`Google Flow 建立失敗：${errorNotice}`);
+        if (acknowledged) {
+          log("Submitted item", item.id, "(Flow acknowledged)");
+          return true;
+        }
+        log("[Submit] trusted click accepted but Flow did not acknowledge; will retry if available");
       }
       if (attempt < 2) {
-        log("[Submit] no Flow acknowledgement; refreshing primary button before retry");
         await sleep(500);
         button = findSubmitButton();
+        log("[Submit] refreshed primary button for retry:", JSON.stringify(submitButtonDiagnostic(button)));
       }
     }
-    throw new Error("Flow did not acknowledge the create button");
+    const errorNotice = findFlowErrorNotice();
+    throw new Error(errorNotice
+      ? `Google Flow 建立失敗：${errorNotice}`
+      : "Google Flow 未確認建立請求；請確認點數、建立按鈕和 Flow 頁面是否有錯誤提示");
   }
 
   function findAspectRatioButtons() {
@@ -605,6 +742,18 @@
       };
       check();
     });
+  }
+
+  function detectCreditBlock() {
+    try {
+      const texts = queryAllVisible(document).map(el => (el.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+      const blocked = texts.find(text => {
+        if (/(?:生成|產生|將|将)\s*(?:消耗|消費)|(?:消耗|消費)\s*\d.*(?:点数|點數|credits?)/i.test(text)) return false;
+        // 「0 个点数」通常只是目前動作的成本標籤；只有 Flow 明確表示不可用時才阻擋。
+        return /(?:点数不足|點數不足|沒有可用(?:的)?点数|沒有可用(?:的)?點數|no credits?|insufficient credits?|quota exceeded|余额不足|餘額不足)/i.test(text);
+      });
+      return blocked || null;
+    } catch (e) { return null; }
   }
 
   // Diagnostic: collect visible element labels
@@ -1723,11 +1872,67 @@
     stopped = false;
   }
 
+  async function captureImageResult(item) {
+    let media;
+    try {
+      media = await waitForResult(60000);
+    } catch (e) {
+      logError("圖片結果等待失敗:", e.message);
+      throw new Error(`Google Flow 圖片結果等待失敗：${e.message}`);
+    }
+    if (!media || media.tagName !== "IMG") {
+      logError("Google Flow 未找到本任務的新圖片結果", item.id);
+      throw new Error("Google Flow 未找到圖片結果，請查看 Flow 頁面與除錯紀錄");
+    }
+    const url = media.src || media.currentSrc;
+    if (!url) throw new Error("Google Flow 圖片結果沒有可下載的 URL");
+    const ext = (url.split("?")[0].match(/\.(png|jpe?g|webp)$/i) || ["", "png"])[1];
+    const resultName = outputFileName(item, 0, ext);
+    // 先回報結果，讓背景將任務標記為完成，避免「執行中」卡死；再嘗試擷取 prevImage
+    reportItemResult(item.id, url, undefined, { localFileName: resultName });
+    log("Image result reported for item", item.id, "url:", url.slice(0, 80), "name:", resultName);
+    try {
+      const resp = await fetch(url);
+      const blob = await resp.blob();
+      prevImage = new File([blob], "prev-image.png", { type: "image/png" });
+      log("Reuse: captured previous image", blob.size, "bytes", "name:", resultName);
+    } catch (e) {
+      logError("圖片結果 prevImage 下載失敗（不影響已完成判定）:", e.message);
+      // 非致命：已回報完成，prevImage 僅供下一段「延用」使用
+    }
+  }
+
+  async function recoverSubmittedItem(item) {
+    if (config.mode === "text2image" || config.mode === "image2image") {
+      await captureImageResult(item);
+      return;
+    }
+    const media = await waitForResult(60000);
+    if (!media) throw new Error("Google Flow 已接受建立，但仍未找到生成結果");
+    const url = media.src || media.currentSrc;
+    if (!url) throw new Error("Google Flow 已接受建立，但生成結果沒有 URL");
+    reportItemResult(item.id, url, undefined, {
+      segmentId: item.segmentId,
+      cutId: item.cutId || item.sourceEntityId,
+      durationSec: item.durationSec,
+      localFileName: `${item.cutId || item.sourceEntityId || `cut-${item.id}`}.mp4`,
+    });
+    log("Recovered already-submitted result for item", item.id);
+  }
+
   // Process one prompt
   async function processOne(item) {
     if (stopped) throw new Error("stopped");
     reportItemStatus(item.id, "running");
-    mediaBefore = snapshotMedia();
+    const isImageMode = config.mode === "text2image" || config.mode === "image2image";
+    const savedMediaBefore = mediaBeforeByJob.get(item.jobId);
+    mediaBefore = savedMediaBefore || snapshotMedia();
+    if (!savedMediaBefore) mediaBeforeByJob.set(item.jobId, new Set(mediaBefore));
+    if (submittedJobIds.has(item.jobId)) {
+      log("Item", item.id, "already submitted; waiting for its existing Flow result instead of re-entering prompt");
+      await recoverSubmittedItem(item);
+      return;
+    }
     // Diagnostics on first item
     if (item.id === 0) {
       log("[Config] mode=", config.mode, "aspect=", config.aspect, "model=", config.model,
@@ -1801,7 +2006,6 @@
 
     // Set options
     await sleep(800);
-    const isImageMode = config.mode === "text2image" || config.mode === "image2image";
     // 點擊模型選擇器按鈕開啟設定面板（如 "🍌 Nano Banana 2..."）
     const panelOpened = await openModelPanel();
     if (panelOpened) {
@@ -1915,7 +2119,14 @@
         log("[Submit] prompt present before submit, len=" + cur.length);
       }
     }
+    const creditBlock = detectCreditBlock();
+    if (creditBlock) {
+      logError("Google Flow 顯示點數或方案錯誤:", creditBlock);
+      throw new Error(`Google Flow 點數或方案錯誤：${creditBlock}`);
+    }
     await submitPrompt(item);
+    submittedJobIds.add(item.jobId);
+    log("[Submit] accepted once for job", item.jobId, "— retries will only wait for the existing result");
 
     // Observe results
     observeResults(item);
@@ -1924,33 +2135,7 @@
     await sleep(10000);
 
     // 圖片模式：擷取本段生成的圖片，存為 prevImage 供下一段「延用」使用，並回報對應名稱。
-    if (isImageMode) {
-      let media;
-      try {
-        media = await waitForResult(20000);
-      } catch (e) {
-        logError("圖片結果等待失敗:", e.message);
-        throw new Error(`Google Flow 圖片結果等待失敗：${e.message}`);
-      }
-      if (!media || media.tagName !== "IMG") {
-        logError("Google Flow 未找到本任務的新圖片結果", item.id);
-        throw new Error("Google Flow 未找到圖片結果，請查看 Flow 頁面與除錯紀錄");
-      }
-      const url = media.src || media.currentSrc;
-      if (!url) throw new Error("Google Flow 圖片結果沒有可下載的 URL");
-      try {
-        const resp = await fetch(url);
-        const blob = await resp.blob();
-        prevImage = new File([blob], "prev-image.png", { type: "image/png" });
-        const ext = (url.split("?")[0].match(/\.(png|jpe?g|webp)$/i) || ["", "png"])[1];
-        const resultName = outputFileName(item, 0, ext);
-        reportItemResult(item.id, url, undefined, { localFileName: resultName });
-        log("Reuse: captured previous image", blob.size, "bytes", "name:", resultName);
-      } catch (e) {
-        logError("圖片結果下載失敗:", e.message);
-        throw new Error(`Google Flow 圖片結果下載失敗：${e.message}`);
-      }
-    }
+    if (isImageMode) await captureImageResult(item);
 
     // Chain Prompt: capture last frame
     if (config.chainEnabled && config.mode === "frame2video") {

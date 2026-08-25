@@ -68,6 +68,19 @@ describe("Auto-Flow run state", () => {
     expect(result.run.itemResults["0:0"]).toMatchObject({ videoAssetId: "asset-1", localFileName: "CUT-01.mp4" });
   });
 
+  it("finishes the final batch from ITEM_RESULT even if ITEM_STATUS done is late or missing", () => {
+    const run = createAutoFlowRun("run-1", [batch("job-1", 1), batch("job-2", 2)]);
+    const first = handleAutoFlowItemResult(run, 0, { videoUrl: "https://flow.test/first.png" });
+    expect(first.run.status).toBe("running");
+    expect(first.run.batchIndex).toBe(1);
+    expect(first.events).toContainEqual({ kind: "dispatch", batch: first.run.batches[1] });
+
+    const second = handleAutoFlowItemResult(first.run, 0, { videoUrl: "https://flow.test/second.png" });
+    expect(second.run.status).toBe("completed");
+    expect(second.events).toContainEqual({ kind: "job-status", jobId: "job-2", status: "completed" });
+    expect(second.events).toContainEqual({ kind: "completed" });
+  });
+
   it("maps Auto-Flow retry reports to a retrying job status", () => {
     const run = createAutoFlowRun("run-1", [batch("job-1", 1)]);
     expect(handleAutoFlowRetry(run, 0)).toEqual([{ kind: "job-status", jobId: "job-1", status: "retrying" }]);

@@ -41,6 +41,15 @@ export function createJobStore() {
       return records.filter((record) => !projectId || record.projectId === projectId).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     },
     async remove(id: string) { await (await database()).delete("jobs", id); },
+    async removeAll(projectId?: string) {
+      const db = await database();
+      const tx = db.transaction("jobs", "readwrite");
+      const records = await tx.store.getAll();
+      const targets = records.filter((record) => !projectId || record.projectId === projectId);
+      await Promise.all(targets.map((record) => tx.store.delete(record.id)));
+      await tx.done;
+      return targets.length;
+    },
     async updateStatus(id: string, status: FlowJobStatus, patch: Partial<StoredJobRecord> = {}) {
       const existing = await (await database()).get("jobs", id);
       if (!existing) throw new Error(`Flow job not found: ${id}`);

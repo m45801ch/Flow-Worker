@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ModelOption, ProviderKind } from "../../providers/models";
 import { normalizeProviderSettings, type GenerationStage, type StoredProviderSettings } from "../../providers/settings";
-import { clearDebugLogs, readDebugLogs, type DebugLogEntry } from "../debug-log";
+import { clearDebugLogs, getDebugLogMode, readDebugLogs, setDebugLogMode, type DebugLogEntry, type DebugLogMode } from "../debug-log";
 import { safeJson } from "../../security/redaction";
 
 const providerLabels: Record<ProviderKind, string> = { gemini: "Gemini", openai: "OpenAI", groq: "Groq", openrouter: "OpenRouter" };
@@ -34,6 +34,7 @@ export function ProviderSettingsView() {
   const [selectedProvider, setSelectedProvider] = useState<ProviderKind>("gemini");
   const [selectedStage, setSelectedStage] = useState<GenerationStage>("outline");
   const [logs, setLogs] = useState<DebugLogEntry[]>(() => readDebugLogs());
+  const [logMode, setLogMode] = useState<DebugLogMode>(() => getDebugLogMode());
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
@@ -46,12 +47,14 @@ export function ProviderSettingsView() {
   }, [extension]);
 
   useEffect(() => {
-    const refreshLogs = () => setLogs(readDebugLogs());
+    const refreshLogs = () => { setLogs(readDebugLogs()); setLogMode(getDebugLogMode()); };
     window.addEventListener("flow-companion-debug", refreshLogs);
     window.addEventListener("flow-companion-debug-clear", refreshLogs);
+    window.addEventListener("flow-companion-debug-mode", refreshLogs);
     return () => {
       window.removeEventListener("flow-companion-debug", refreshLogs);
       window.removeEventListener("flow-companion-debug-clear", refreshLogs);
+      window.removeEventListener("flow-companion-debug-mode", refreshLogs);
     };
   }, []);
 
@@ -107,6 +110,7 @@ export function ProviderSettingsView() {
   };
 
   const clearLogs = () => { clearDebugLogs(); setLogs([]); setNotice("日誌紀錄已清除"); };
+  const updateLogMode = (mode: DebugLogMode) => { setLogMode(mode); setDebugLogMode(mode); setLogs(readDebugLogs()); setNotice(mode === "important" ? "已切換為重點紀錄模式" : "已切換為完整紀錄模式；重現問題後請下載日誌"); };
 
   const downloadLogs = () => {
     const blob = new Blob([serializeLogs(logs)], { type: "application/json" });
@@ -166,6 +170,7 @@ export function ProviderSettingsView() {
     <div className="form-card settings-card">
       <div className="card-label">除錯與診斷</div>
       <p className="security-note">日誌紀錄會移除 API 金鑰、Authorization、token、data URL 與服務商原始回應。</p>
+      <label>紀錄模式<select value={logMode} onChange={(event) => updateLogMode(event.target.value as DebugLogMode)}><option value="important">重點模式（建議）</option><option value="verbose">完整模式（除錯用）</option></select><span className="field-hint">重點模式只保留錯誤、提交、結果、重試及批次狀態；需要抓取完整 DOM 時才切換完整模式。</span></label>
       <details className="debug-log-panel">
         <summary>錯誤／除錯日誌紀錄（{logs.length} 筆）</summary>
         <div className="debug-log-toolbar">

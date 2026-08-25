@@ -15,6 +15,30 @@ const runId = () => typeof crypto?.randomUUID === "function" ? crypto.randomUUID
 
 let activeAutoFlowRun: AutoFlowRun | null = null;
 let activeFlowTabId: number | null = null;
+let runCompletionWatchdog: ReturnType<typeof setInterval> | null = null;
+
+function clearRunCompletionWatchdog() {
+  if (runCompletionWatchdog !== null) { clearInterval(runCompletionWatchdog); runCompletionWatchdog = null; }
+}
+
+function startRunCompletionWatchdog() {
+  clearRunCompletionWatchdog();
+  runCompletionWatchdog = setInterval(() => { void finalizeRunFromJobRecords(); }, 1000);
+}
+
+async function finalizeRunFromJobRecords() {
+  const run = activeAutoFlowRun;
+  if (!run || run.status !== "running") return;
+  const records = await Promise.all(run.batches.flatMap((batch) => batch.queue.map((item) => jobStore.get(item.jobId))));
+  if (records.length === 0 || records.some((record) => !record || !["completed", "failed", "cancelled", "paused"].includes(record.status))) return;
+  const failed = records.find((record) => record?.status === "failed" || record?.status === "paused");
+  const nextRun: AutoFlowRun = { ...run, status: failed ? "failed" : "completed", ...(failed ? { error: failed.error || "部分 Flow 任務未成功完成" } : {}) };
+  activeAutoFlowRun = nextRun;
+  clearRunCompletionWatchdog();
+  await emitRunStatus(nextRun.status, failed ? { error: nextRun.error } : {});
+  activeAutoFlowRun = null;
+  activeFlowTabId = null;
+}
 
 chrome.runtime?.onInstalled?.addListener(() => { void enableActionToOpenPanel(); });
 void enableActionToOpenPanel();
@@ -38,11 +62,12 @@ async function sendBatchToFlow(batch: AutoFlowBatch): Promise<number> {
   const tabId = await currentFlowTab();
   activeFlowTabId = tabId;
   try {
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ["auto-flow-free.js"] });
+    // Flow 的提示詞編輯器與建立按鈕在主文件；注入所有 frame 會讓 iframe 重複接收 START_BATCH。
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["auto-flow-free.js"] });
   } catch (error) {
     throw new Error(`無法載入 Flow 自動化腳本：${error instanceof Error ? error.message : "scripting failed"}`);
   }
-  await chrome.tabs.sendMessage(tabId, { type: "START_BATCH", config: batch.config, queue: batch.queue });
+  await chrome.tabs.sendMessage(tabId, { type: "START_BATCH", config: batch.config, queue: batch.queue }, { frameId: 0 });
   return tabId;
 }
 
@@ -89,10 +114,10 @@ async function applyRunnerEvent(event: AutoFlowRunEvent) {
     await emitRunStatus("running", { batchIndex: activeAutoFlowRun?.batchIndex, batchSize: event.batch.queue.length });
     return;
   }
-  if (event.kind === "completed") { await emitRunStatus("completed"); activeAutoFlowRun = null; activeFlowTabId = null; return; }
+  if (event.kind === "completed") { clearRunCompletionWatchdog(); await emitRunStatus("completed"); activeAutoFlowRun = null; activeFlowTabId = null; return; }
   if (event.kind === "failed") {
     const failedRun = activeAutoFlowRun;
-    if (activeFlowTabId !== null) { try { await chrome.tabs.sendMessage(activeFlowTabId, { type: "STOP_BATCH" }); } catch { /* tab may have navigated */ } }
+    if (activeFlowTabId !== null) { try { await chrome.tabs.sendMessage(activeFlowTabId, { type: "STOP_BATCH" }, { frameId: 0 }); } catch { /* tab may have navigated */ } }
     if (failedRun) {
       for (const [batchIndex, batch] of failedRun.batches.entries()) {
         for (const item of batch.queue) {
@@ -101,12 +126,13 @@ async function applyRunnerEvent(event: AutoFlowRunEvent) {
         }
       }
     }
+    clearRunCompletionWatchdog();
     await emitRunStatus("failed", { error: event.error });
     activeAutoFlowRun = null;
     activeFlowTabId = null;
     return;
   }
-  if (event.kind === "stopped") { await emitRunStatus("stopped"); activeAutoFlowRun = null; activeFlowTabId = null; }
+  if (event.kind === "stopped") { clearRunCompletionWatchdog(); await emitRunStatus("stopped"); activeAutoFlowRun = null; activeFlowTabId = null; }
 }
 
 async function startAutoFlowBatch(message: any, sendResponse: (response: unknown) => void) {
@@ -115,11 +141,13 @@ async function startAutoFlowBatch(message: any, sendResponse: (response: unknown
   if (!batches.length) { sendResponse({ ok: false, error: "沒有可執行的 Flow job" }); return; }
   try {
     activeAutoFlowRun = createAutoFlowRun(typeof message.runId === "string" ? message.runId : runId(), batches);
+    startRunCompletionWatchdog();
     const startedRunId = activeAutoFlowRun.runId;
     await applyRunnerEvent(dispatchCurrentBatch(activeAutoFlowRun));
     sendResponse({ ok: true, runId: startedRunId, batchCount: batches.length });
   } catch (error) {
     const failedRun = activeAutoFlowRun;
+    clearRunCompletionWatchdog();
     activeAutoFlowRun = null;
     activeFlowTabId = null;
     if (failedRun) for (const batch of failedRun.batches.slice(failedRun.batchIndex)) for (const item of batch.queue) await setJobStatus(item.jobId, "failed", error instanceof Error ? error.message : "Unable to start Auto-Flow");
@@ -128,7 +156,7 @@ async function startAutoFlowBatch(message: any, sendResponse: (response: unknown
 }
 
 async function stopAutoFlow(sendResponse: (response: unknown) => void) {
-  if (!activeAutoFlowRun) { sendResponse({ ok: true, status: "idle" }); return; }
+  if (!activeAutoFlowRun) { clearRunCompletionWatchdog(); sendResponse({ ok: true, status: "idle" }); return; }
   const stopped = markRunStopped(activeAutoFlowRun);
   activeAutoFlowRun = stopped.run;
   if (activeFlowTabId !== null) { try { await chrome.tabs.sendMessage(activeFlowTabId, { type: "STOP_BATCH" }); } catch { /* tab may have navigated */ } }
@@ -137,11 +165,15 @@ async function stopAutoFlow(sendResponse: (response: unknown) => void) {
       if (activeAutoFlowRun.itemStatuses[`${activeAutoFlowRun.batches.indexOf(batch)}:${item.id}`] !== "done") await setJobStatus(item.jobId, "paused", "使用者停止 Auto-Flow 佇列");
     }
   }
+  clearRunCompletionWatchdog();
   await applyRunnerEvent(stopped.event);
   sendResponse({ ok: true, status: "stopped" });
 }
 
 async function handleAutoFlowEvent(message: any, sender: any) {
+  const senderFrameId = typeof sender?.frameId === "number" ? sender.frameId : 0;
+  // 非主 frame 只可提供除錯資料，不得改寫佇列的 item/result 狀態。
+  if (senderFrameId !== 0 && ["ITEM_RETRY", "ITEM_RESULT", "ITEM_STATUS"].includes(message.type)) return;
   if (message.type === "DEBUG_LOG") {
     try { chrome.runtime.sendMessage({ type: "AUTO_FLOW_DEBUG_LOG", level: message.level === "error" ? "error" : "info", message: String(message.text || ""), stage: "queue", details: { source: "flow-content-script", tabId: sender?.tab?.id } }); } catch { /* side panel may be closed */ }
     return;

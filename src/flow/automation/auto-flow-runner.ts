@@ -51,6 +51,7 @@ export function handleAutoFlowItemResult(run: AutoFlowRun, itemId: number, paylo
   const current = run.batches[run.batchIndex];
   const item = current?.queue.find((candidate) => candidate.id === itemId);
   if (!item) return { run, events: [] };
+  const itemKey = key(run.batchIndex, itemId);
   const result: AutoFlowItemResult = {
     jobId: item.jobId,
     ...(item.segmentId ? { segmentId: item.segmentId } : {}),
@@ -58,34 +59,30 @@ export function handleAutoFlowItemResult(run: AutoFlowRun, itemId: number, paylo
     ...(item.durationSec ? { durationSec: item.durationSec } : {}),
     ...payload,
   };
-  const nextRun = { ...run, itemResults: { ...run.itemResults, [key(run.batchIndex, itemId)]: result } };
-  const event: AutoFlowRunEvent = {
-    kind: "item-result",
-    jobId: result.jobId,
-    ...(result.segmentId ? { segmentId: result.segmentId } : {}),
-    ...(result.cutId ? { cutId: result.cutId } : {}),
-    ...(result.videoAssetId ? { videoAssetId: result.videoAssetId } : {}),
-    ...(result.localFileName ? { localFileName: result.localFileName } : {}),
-    ...(result.videoUrl ? { videoUrl: result.videoUrl } : {}),
-    ...(result.dataURL ? { dataURL: result.dataURL } : {}),
-    ...(result.durationSec ? { durationSec: result.durationSec } : {}),
-  };
-  return { run: nextRun, events: [event] };
+  const nextStatuses = { ...run.itemStatuses, [itemKey]: "done" as const };
+  const nextRun = { ...run, itemStatuses: nextStatuses, itemResults: { ...run.itemResults, [itemKey]: result } };
+  const events: AutoFlowRunEvent[] = [
+    {
+      kind: "item-result",
+      jobId: result.jobId,
+      ...(result.segmentId ? { segmentId: result.segmentId } : {}),
+      ...(result.cutId ? { cutId: result.cutId } : {}),
+      ...(result.videoAssetId ? { videoAssetId: result.videoAssetId } : {}),
+      ...(result.localFileName ? { localFileName: result.localFileName } : {}),
+      ...(result.videoUrl ? { videoUrl: result.videoUrl } : {}),
+      ...(result.dataURL ? { dataURL: result.dataURL } : {}),
+      ...(result.durationSec ? { durationSec: result.durationSec } : {}),
+    },
+    { kind: "job-status", jobId: result.jobId, status: "completed" },
+  ];
+  return advanceAfterTerminalItem(nextRun, current, nextStatuses, events);
 }
 
-export function handleAutoFlowItemStatus(run: AutoFlowRun, itemId: number, status: "running" | "done" | "error", error?: string): { run: AutoFlowRun; events: AutoFlowRunEvent[] } {
-  if (run.status !== "running") return { run, events: [] };
-  const current = run.batches[run.batchIndex];
-  const item = current.queue.find((candidate) => candidate.id === itemId);
-  if (!item) return { run, events: [] };
-  const nextStatuses = { ...run.itemStatuses, [key(run.batchIndex, itemId)]: status };
-  const jobStatus = status === "running" ? "configuring" : status === "done" ? "completed" : "failed";
-  const events: AutoFlowRunEvent[] = [{ kind: "job-status", jobId: item.jobId, status: jobStatus, ...(error && status === "error" ? { error } : {}) }];
-  if (status === "running") return { run: { ...run, itemStatuses: nextStatuses }, events };
+function advanceAfterTerminalItem(run: AutoFlowRun, current: AutoFlowBatch, nextStatuses: AutoFlowRun["itemStatuses"], events: AutoFlowRunEvent[], failure?: string): { run: AutoFlowRun; events: AutoFlowRunEvent[] } {
   const terminal = current.queue.every((candidate) => ["done", "error"].includes(nextStatuses[key(run.batchIndex, candidate.id)]));
   if (!terminal) return { run: { ...run, itemStatuses: nextStatuses }, events };
   const failedJob = current.queue.find((candidate) => nextStatuses[key(run.batchIndex, candidate.id)] === "error");
-  const batchFailure = failedJob ? (error || `Auto-Flow failed for job ${failedJob.jobId || itemId}`) : undefined;
+  const batchFailure = failedJob ? (failure || `Auto-Flow failed for job ${failedJob.jobId}`) : undefined;
   const rememberedError = run.error || batchFailure;
   const nextIndex = run.batchIndex + 1;
   if (nextIndex >= run.batches.length) {
@@ -101,6 +98,22 @@ export function handleAutoFlowItemStatus(run: AutoFlowRun, itemId: number, statu
   const nextRun = { ...run, itemStatuses: nextStatuses, batchIndex: nextIndex, ...(rememberedError ? { error: rememberedError } : {}) };
   events.push({ kind: "dispatch", batch: nextRun.batches[nextIndex] });
   return { run: nextRun, events };
+}
+
+export function handleAutoFlowItemStatus(run: AutoFlowRun, itemId: number, status: "running" | "done" | "error", error?: string): { run: AutoFlowRun; events: AutoFlowRunEvent[] } {
+  if (run.status !== "running") return { run, events: [] };
+  const current = run.batches[run.batchIndex];
+  const item = current?.queue.find((candidate) => candidate.id === itemId);
+  if (!item) return { run, events: [] };
+  const itemKey = key(run.batchIndex, itemId);
+  const previous = run.itemStatuses[itemKey];
+  // ITEM_RESULT 會先把任務標記為 done；之後內容腳本補送的 ITEM_STATUS done 不得再次派送下一批。
+  if (previous === status || (previous === "done" && status !== "error") || (previous === "error" && status !== "running")) return { run, events: [] };
+  const nextStatuses = { ...run.itemStatuses, [itemKey]: status };
+  const jobStatus = status === "running" ? "configuring" : status === "done" ? "completed" : "failed";
+  const events: AutoFlowRunEvent[] = [{ kind: "job-status", jobId: item.jobId, status: jobStatus, ...(error && status === "error" ? { error } : {}) }];
+  if (status === "running") return { run: { ...run, itemStatuses: nextStatuses }, events };
+  return advanceAfterTerminalItem({ ...run, itemStatuses: nextStatuses }, current, nextStatuses, events, status === "error" ? error : undefined);
 }
 
 export function handleAutoFlowRetry(run: AutoFlowRun, itemId: number): AutoFlowRunEvent[] {
