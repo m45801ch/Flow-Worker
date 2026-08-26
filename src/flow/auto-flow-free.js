@@ -320,17 +320,19 @@
   }
 
   function findSubmitButton() {
-    const describe = b => (b.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
+    const describe = b => ((b.textContent || "") + " " + (b.getAttribute("aria-label") || "")).replace(/\s+/g, " ").trim().slice(0, 40);
     const pos = b => { const r = b.getBoundingClientRect(); return Math.round(r.left) + "," + Math.round(r.top); };
-    // 收集所有可見 <button>（含停用——送出鍵可能因提示詞未被辨識而停用，需記錄）
-    const btns = Array.from(document.querySelectorAll("button")).filter(b => {
+    // 收集所有可見按鈕：<button> 與 [role='button'] 都算（Flow 建立鍵可能是 div role=button），
+    // 含停用——送出鍵可能因提示詞未被辨識而停用，需記錄。
+    const btns = Array.from(document.querySelectorAll("button, [role='button']")).filter(b => {
       const r = b.getBoundingClientRect();
       return r.width > 0 && r.height > 0;
     });
     const createRe = /创建|創建|create|生成|產生|送出|提交|執行|submit/i;
     const excludeRe = /取消|cancel|close|關閉|清除|更多|more_vert|搜索|search|排序|filter|添加媒体|返回|收起/i;
     const candidates = btns.filter(b => {
-      const t = (b.textContent || "").replace(/\s+/g, " ").trim();
+      // 圖示按鈕的 textContent 可能是空的，必須連 aria-label／title 一起比對
+      const t = ((b.textContent || "") + " " + (b.getAttribute("aria-label") || "") + " " + (b.getAttribute("title") || "")).replace(/\s+/g, " ").trim();
       if (!t) return false;
       if (excludeRe.test(t)) return false;
       return createRe.test(t);
@@ -339,15 +341,16 @@
     try {
       log("[Submit] candidate buttons:", candidates.map(b => "'" + describe(b) + "' d=" + (b.disabled || b.getAttribute("aria-disabled") === "true") + " pos=" + pos(b)).join(" | "));
     } catch (e) { /* ignore */ }
-    // 優先：含 arrow_forward 的主送出鍵（Flow 的 arrow_forward创建）
-    const submit = candidates.find(b => /arrow_forward/i.test(b.textContent || ""));
+    // 優先：含 arrow_forward 的主送出鍵（Flow 的 arrow_forward创建；圖示鍵看 aria-label／title）
+    const fullText = b => ((b.textContent || "") + " " + (b.getAttribute("aria-label") || "") + " " + (b.getAttribute("title") || ""));
+    const submit = candidates.find(b => /arrow_forward/i.test(fullText(b)));
     if (submit) {
       const dis = submit.disabled || submit.getAttribute("aria-disabled") === "true";
       log("Submit button:", describe(submit), dis ? "(DISABLED—提示詞可能未被 Flow 辨識)" : "");
       return submit;
     }
     // 其次：取最右邊的「創建」按鈕（排除 add_2 加號鍵）
-    const noAdd = candidates.filter(b => !/add_2|^add\b|^add$/.test((b.textContent || "").replace(/\s+/g, " ").trim()));
+    const noAdd = candidates.filter(b => !/add_2|^add\b|^add$/.test(fullText(b).replace(/\s+/g, " ").trim()));
     if (noAdd.length > 0) {
       const btn = noAdd.sort((a, b) => b.getBoundingClientRect().left - a.getBoundingClientRect().left)[0];
       log("Submit button (rightmost create):", describe(btn));
@@ -377,6 +380,7 @@
       log("[Submit] primary button is disabled");
       return false;
     }
+    let covered = false;
     try {
       const r = button.getBoundingClientRect();
       const top = document.elementFromPoint(
@@ -385,11 +389,10 @@
       );
       if (top && top !== button && !button.contains(top)) {
         log("[Submit] primary button is covered by:", top.tagName, (top.textContent || "").trim().slice(0, 40));
-        return false;
+        covered = true;
       }
     } catch (e) {
       log("[Submit] button hit-test failed:", e.message);
-      return false;
     }
     let x, y;
     try {
@@ -410,6 +413,22 @@
       log("[Submit] trusted click rejected:", (reply && reply.error) || "no response");
     } catch (e) {
       log("[Submit] trusted click failed:", e.message);
+    }
+    // Trusted click unavailable → 合成事件仍是有效的退路（Flow 對 pointerdown/up 序列有反應）。
+    // 被遮罩時點擊覆蓋層讓事件冒泡到按鈕；否則直接對按鈕派發完整序列。
+    try {
+      const target = covered
+        ? (document.elementFromPoint(x, y) || button)
+        : button;
+      target.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+      target.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, clientX: x, clientY: y }));
+      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, clientX: x, clientY: y }));
+      target.click();
+      log("[Submit] synthetic click fallback dispatched on", target.tagName, covered ? "(covering element)" : "");
+      return true;
+    } catch (e) {
+      log("[Submit] synthetic click fallback failed:", e.message);
     }
     return false;
   }
